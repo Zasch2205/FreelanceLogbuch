@@ -14,6 +14,7 @@
 		A00000000000000000000005 /* WorkLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000015 /* WorkLocation.swift */; };
 		A00000000000000000000006 /* ShiftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* ShiftStore.swift */; };
 		A00000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* Assets.xcassets */; };
+		A00000000000000000000008 /* ShiftCalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000018 /* ShiftCalendarService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 		A00000000000000000000015 /* WorkLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkLocation.swift; sourceTree = "<group>"; };
 		A00000000000000000000016 /* ShiftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftStore.swift; sourceTree = "<group>"; };
 		A00000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A00000000000000000000018 /* ShiftCalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftCalendarService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,6 +82,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000016 /* ShiftStore.swift */,
+				A00000000000000000000018 /* ShiftCalendarService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -159,6 +162,7 @@
 				A00000000000000000000004 /* Shift.swift in Sources */,
 				A00000000000000000000005 /* WorkLocation.swift in Sources */,
 				A00000000000000000000006 /* ShiftStore.swift in Sources */,
+				A00000000000000000000008 /* ShiftCalendarService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -282,6 +286,8 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "FreelanceLogbuch trägt bestätigte Schichten in deinen Kalender ein.";
+				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "FreelanceLogbuch trägt bestätigte Schichten in deinen Kalender ein.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -309,6 +315,8 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "FreelanceLogbuch trägt bestätigte Schichten in deinen Kalender ein.";
+				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "FreelanceLogbuch trägt bestätigte Schichten in deinen Kalender ein.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (

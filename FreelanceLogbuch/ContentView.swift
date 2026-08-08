@@ -11,6 +11,10 @@ struct ContentView: View {
 
     @AppStorage("freelancerName") private var freelancerName: String = ""
 
+    init() {
+        Self.configureNavigationBarAppearance()
+    }
+
     private var activeLocation: WorkLocation? {
         workLocations.first(where: { $0.isActive })
     }
@@ -26,72 +30,80 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AppTheme.backgroundGradient
-                    .ignoresSafeArea()
+                AppBackground()
 
-                List {
-                    if freelancerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        Section {
-                            GlassPanel {
-                                Text(freelancerName)
-                                    .font(.subheadline)
+                VStack(spacing: 0) {
+                    Text("Freelance Logbuch")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(red: 1.0, green: 0.88, blue: 0.28))
+                        .shadow(color: .black.opacity(0.38), radius: 2, x: 0, y: 1)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+
+                    List {
+                        if freelancerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                            Section {
+                                GlassPanel {
+                                    Text(freelancerName)
+                                        .font(.subheadline)
+                                }
+                            } header: {
+                                AppSectionHeader("Freelancer")
                             }
-                        } header: {
-                            AppSectionHeader("Freelancer")
+                            .listRowBackground(Color.clear)
                         }
-                        .listRowBackground(Color.clear)
-                    }
 
-                    if let activeLocation {
-                        Section {
-                            GlassPanel {
-                                Text(activeLocation.name)
-                                    .font(.subheadline)
+                        if let activeLocation {
+                            Section {
+                                GlassPanel {
+                                    Text(activeLocation.name)
+                                        .font(.subheadline)
+                                }
+                            } header: {
+                                AppSectionHeader("Aktiver Arbeitsort")
                             }
-                        } header: {
-                            AppSectionHeader("Aktiver Arbeitsort")
+                            .listRowBackground(Color.clear)
                         }
-                        .listRowBackground(Color.clear)
-                    }
 
-                    Section {
-                        if latestShifts.isEmpty {
-                            GlassPanel {
-                                Text("Noch keine Schichten vorhanden")
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            GlassPanel {
-                                VStack(spacing: 0) {
-                                    ForEach(Array(latestShifts.enumerated()), id: \.element.id) { index, shift in
-                                        ShiftRowView(shift: shift)
+                        Section {
+                            if latestShifts.isEmpty {
+                                GlassPanel {
+                                    Text("Noch keine Schichten vorhanden")
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                GlassPanel {
+                                    VStack(spacing: 0) {
+                                        ForEach(Array(latestShifts.enumerated()), id: \.element.id) { index, shift in
+                                            ShiftRowView(shift: shift)
 
-                                        if index < latestShifts.count - 1 {
-                                            Divider()
-                                                .overlay(Color.white.opacity(0.35))
+                                            if index < latestShifts.count - 1 {
+                                                Divider()
+                                                    .overlay(Color.white.opacity(0.35))
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        GlassPanel {
-                            NavigationLink {
-                                AllShiftsView(shifts: $shifts, activeLocationName: activeLocation?.name)
-                            } label: {
-                                Label("Alle Schichten anzeigen", systemImage: "list.bullet")
+                            GlassPanel {
+                                NavigationLink {
+                                    AllShiftsView(shifts: $shifts, activeLocationName: activeLocation?.name)
+                                } label: {
+                                    Label("Alle Schichten anzeigen", systemImage: "list.bullet")
+                                }
                             }
+                        } header: {
+                            AppSectionHeader("Letzte Schichten")
                         }
-                    } header: {
-                        AppSectionHeader("Letzte Schichten")
+                        .listRowBackground(Color.clear)
                     }
-                    .listRowBackground(Color.clear)
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .listRowSeparator(.hidden)
                 }
-                .listStyle(.insetGrouped)
-                .scrollContentBackground(.hidden)
-                .listRowSeparator(.hidden)
             }
-            .navigationTitle("FreelanceLogbuch")
             .tint(AppTheme.accentBlue)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -111,6 +123,22 @@ struct ContentView: View {
                 workLocations = WorkLocationPersistence.load()
             }
         }
+    }
+
+    private static func configureNavigationBarAppearance() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.largeTitleTextAttributes = [
+            .foregroundColor: UIColor(red: 0.90, green: 0.97, blue: 1.0, alpha: 1.0)
+        ]
+        appearance.titleTextAttributes = [
+            .foregroundColor: UIColor(red: 0.90, green: 0.97, blue: 1.0, alpha: 1.0)
+        ]
+
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
+        UINavigationBar.appearance().compactScrollEdgeAppearance = appearance
     }
 }
 
@@ -145,8 +173,7 @@ private struct AllShiftsView: View {
 
     var body: some View {
         ZStack {
-            AppTheme.backgroundGradient
-                .ignoresSafeArea()
+            AppBackground()
 
             List {
                 if sortedShifts.isEmpty {
@@ -265,8 +292,7 @@ private struct AddManualShiftView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AppTheme.backgroundGradient
-                    .ignoresSafeArea()
+                AppBackground()
 
                 Form {
                     Section {
@@ -356,22 +382,86 @@ private struct GlassPanel<Content: View>: View {
             .padding(.vertical, 10)
             .padding(.horizontal, 12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.white.opacity(0.34), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.26), lineWidth: 1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.16), Color.clear],
+                            colors: [Color.white.opacity(0.14), Color.clear],
                             startPoint: .topLeading,
                             endPoint: .center
                         )
                     )
             )
-            .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 6)
+            .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 6)
+    }
+}
+
+private struct AppBackground: View {
+    var body: some View {
+        ZStack {
+            AppTheme.backgroundGradient
+
+            IconMotifBackdrop()
+                .opacity(0.36)
+                .blendMode(.screen)
+
+            IconMotifBackdrop()
+                .scaleEffect(1.10)
+                .blur(radius: 10)
+                .opacity(0.30)
+                .blendMode(.screen)
+
+            IconMotifBackdrop()
+                .scaleEffect(1.2)
+                .blur(radius: 24)
+                .opacity(0.18)
+                .blendMode(.plusLighter)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct IconMotifBackdrop: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let w = proxy.size.width
+            let h = proxy.size.height
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 110)
+                    .fill(Color(red: 0.62, green: 0.86, blue: 1.0).opacity(0.38))
+                    .frame(width: w * 0.92, height: h * 0.26)
+                    .offset(y: h * 0.24)
+
+                RoundedRectangle(cornerRadius: 56)
+                    .fill(Color(red: 0.76, green: 0.92, blue: 1.0).opacity(0.42))
+                    .frame(width: w * 0.62, height: h * 0.16)
+                    .rotationEffect(.degrees(-12))
+                    .offset(x: w * 0.08, y: h * 0.02)
+
+                RoundedRectangle(cornerRadius: 30)
+                    .fill(Color(red: 0.60, green: 0.80, blue: 1.0).opacity(0.40))
+                    .frame(width: w * 0.52, height: h * 0.14)
+                    .offset(x: -w * 0.05, y: h * 0.10)
+
+                RoundedRectangle(cornerRadius: 130)
+                    .fill(Color(red: 0.75, green: 0.90, blue: 1.0).opacity(0.32))
+                    .frame(width: w * 0.72, height: h * 0.22)
+                    .rotationEffect(.degrees(-18))
+                    .offset(x: w * 0.14, y: -h * 0.16)
+
+                Capsule()
+                    .fill(Color(red: 0.70, green: 0.88, blue: 1.0).opacity(0.42))
+                    .frame(width: w * 0.30, height: h * 0.032)
+                    .offset(x: 0, y: h * 0.25)
+            }
+            .frame(width: w, height: h)
+        }
     }
 }
 
@@ -404,8 +494,7 @@ private struct SettingsView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AppTheme.backgroundGradient
-                    .ignoresSafeArea()
+                AppBackground()
 
                 Form {
                     Section {
