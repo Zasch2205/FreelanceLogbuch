@@ -10,6 +10,10 @@ struct ContentView: View {
     @State private var workLocations: [WorkLocation] = []
 
     @AppStorage("freelancerName") private var freelancerName: String = ""
+    @State private var showNotificationConfirmation = false
+    @State private var pendingEventTypeRaw: String = ""
+    @State private var pendingLocationName: String = ""
+    @State private var statusBannerText: String?
 
     init() {
         Self.configureNavigationBarAppearance()
@@ -130,6 +134,80 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .shiftsDidChange)) { _ in
                 shifts = ShiftPersistence.load()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .shiftConfirmationRequired)) { notification in
+                guard
+                    let userInfo = notification.userInfo,
+                    let eventType = userInfo["eventType"] as? String,
+                    let locationName = userInfo["locationName"] as? String,
+                    eventType.isEmpty == false
+                else { return }
+
+                pendingEventTypeRaw = eventType
+                pendingLocationName = locationName
+                showNotificationConfirmation = true
+            }
+            .alert(notificationAlertTitle, isPresented: $showNotificationConfirmation) {
+                Button("Ja") {
+                    ShiftAutomationService.shared.handleInAppConfirmation(
+                        eventTypeRaw: pendingEventTypeRaw,
+                        locationName: pendingLocationName,
+                        decision: .yes
+                    )
+                    showStatusBanner(
+                        pendingEventTypeRaw == "start" ? "Schicht gestartet" : "Schicht beendet"
+                    )
+                }
+                Button("Später") {
+                    ShiftAutomationService.shared.handleInAppConfirmation(
+                        eventTypeRaw: pendingEventTypeRaw,
+                        locationName: pendingLocationName,
+                        decision: .later
+                    )
+                }
+                Button("Nein", role: .cancel) {
+                    ShiftAutomationService.shared.handleInAppConfirmation(
+                        eventTypeRaw: pendingEventTypeRaw,
+                        locationName: pendingLocationName,
+                        decision: .no
+                    )
+                }
+            } message: {
+                Text(notificationAlertMessage)
+            }
+            .overlay(alignment: .top) {
+                if let statusBannerText {
+                    Text(statusBannerText)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        )
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: statusBannerText)
+        }
+    }
+
+    private var notificationAlertTitle: String {
+        pendingEventTypeRaw == "start" ? "Schicht starten?" : "Schicht beenden?"
+    }
+
+    private var notificationAlertMessage: String {
+        if pendingLocationName.isEmpty {
+            return "Bitte bestätige die Schicht-Aktion."
+        }
+        return "Arbeitsort: \(pendingLocationName)"
+    }
+
+    private func showStatusBanner(_ text: String) {
+        statusBannerText = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            statusBannerText = nil
         }
     }
 
@@ -506,34 +584,40 @@ private struct SettingsView: View {
 
                 Form {
                     Section {
-                        TextField("Name", text: $freelancerName)
-                            .textInputAutocapitalization(.words)
+                        GlassPanel {
+                            TextField("Name", text: $freelancerName)
+                                .textInputAutocapitalization(.words)
+                        }
                     } header: {
                         AppSectionHeader("Freelancer")
                     }
                     .listRowBackground(Color.clear)
 
                     Section {
-                        TextField("Adresse eingeben", text: $addressInput, axis: .vertical)
-                            .textInputAutocapitalization(.words)
+                        GlassPanel {
+                            VStack(alignment: .leading, spacing: 10) {
+                                TextField("Adresse eingeben", text: $addressInput, axis: .vertical)
+                                    .textInputAutocapitalization(.words)
 
-                        Button {
-                            Task {
-                                await addAddressAsLocation()
-                            }
-                        } label: {
-                            if isGeocoding {
-                                ProgressView()
-                            } else {
-                                Text("Adresse übernehmen")
-                            }
-                        }
-                        .disabled(addressInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeocoding)
+                                Button {
+                                    Task {
+                                        await addAddressAsLocation()
+                                    }
+                                } label: {
+                                    if isGeocoding {
+                                        ProgressView()
+                                    } else {
+                                        Text("Adresse übernehmen")
+                                    }
+                                }
+                                .disabled(addressInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeocoding)
 
-                        if let errorMessage {
-                            Text(errorMessage)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
+                                if let errorMessage {
+                                    Text(errorMessage)
+                                        .font(.footnote)
+                                        .foregroundStyle(.red)
+                                }
+                            }
                         }
                     } header: {
                         AppSectionHeader("Neuen Ort hinzufügen")
@@ -542,25 +626,29 @@ private struct SettingsView: View {
 
                     Section {
                         if workLocations.isEmpty {
-                            Text("Noch kein Arbeitsort hinterlegt")
-                                .foregroundStyle(.secondary)
+                            GlassPanel {
+                                Text("Noch kein Arbeitsort hinterlegt")
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             ForEach(workLocations) { location in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(location.name)
-                                            .font(.body)
-                                        Text("Radius: \(Int(location.radiusMeters)) m")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                GlassPanel {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(location.name)
+                                                .font(.body)
+                                            Text("Radius: \(Int(location.radiusMeters)) m")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Button(location.isActive ? "Aktiv" : "Als aktiv setzen") {
+                                            setActiveLocation(location.id)
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .tint(location.isActive ? .green : AppTheme.accentBlue)
                                     }
-                                    Spacer()
-                                    Button(location.isActive ? "Aktiv" : "Als aktiv setzen") {
-                                        setActiveLocation(location.id)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    .tint(location.isActive ? .green : AppTheme.accentBlue)
                                 }
                             }
                             .onDelete(perform: deleteLocations)
@@ -572,20 +660,35 @@ private struct SettingsView: View {
 
                     if let activeLocation {
                         Section {
-                            Map(position: .constant(mapRegion)) {
-                                Marker("Arbeitsort", coordinate: activeLocation.coordinate)
-                            }
-                            .frame(height: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            GlassPanel {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Map(position: .constant(mapRegion)) {
+                                        Marker("Arbeitsort", coordinate: activeLocation.coordinate)
+                                    }
+                                    .frame(height: 220)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                            Button("In Apple Maps öffnen") {
-                                openInAppleMaps(location: activeLocation)
+                                    Button("In Apple Maps öffnen") {
+                                        openInAppleMaps(location: activeLocation)
+                                    }
+                                }
                             }
                         } header: {
                             AppSectionHeader("Aktiver Ort auf Karte")
                         }
                         .listRowBackground(Color.clear)
                     }
+
+                    Section {
+                        NavigationLink {
+                            AppInfoView()
+                        } label: {
+                            Label("Info", systemImage: "info.circle")
+                        }
+                    } header: {
+                        AppSectionHeader("Über")
+                    }
+                    .listRowBackground(Color.clear)
                 }
                 .scrollContentBackground(.hidden)
                 .listRowSeparator(.hidden)
@@ -718,6 +821,124 @@ private struct SettingsView: View {
         }
 
         return fallback
+    }
+}
+
+private struct AppInfoView: View {
+    @Environment(\.openURL) private var openURL
+
+    private var versionText: String {
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
+        return "\(shortVersion) (Build \(build))"
+    }
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+
+            Form {
+                Section {
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("(c) 2026 Sascha Molina")
+                            Button("Feedback an s.molina@gmx.de") {
+                                if let mailURL = URL(string: "mailto:s.molina@gmx.de") {
+                                    openURL(mailURL)
+                                }
+                            }
+                            Text("Version: \(versionText)")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.body)
+                    }
+                } header: {
+                    AppSectionHeader("Info")
+                }
+                .listRowBackground(Color.clear)
+
+                Section {
+                    NavigationLink("Impressum") {
+                        LegalImprintView()
+                    }
+                    NavigationLink("Datenschutz") {
+                        LegalPrivacyView()
+                    }
+                } header: {
+                    AppSectionHeader("Recht")
+                }
+                .listRowBackground(Color.clear)
+            }
+            .scrollContentBackground(.hidden)
+            .listRowSeparator(.hidden)
+        }
+        .navigationTitle("Info")
+        .tint(AppTheme.accentBlue)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+}
+
+private struct LegalImprintView: View {
+    var body: some View {
+        ZStack {
+            AppBackground()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Angaben gemäß § 5 DDG")
+                                .font(.headline)
+
+                            Text("Sascha Molina")
+                            Text("Lerchenweg 25")
+                            Text("22885 Barsbüttel")
+                            Text("Deutschland")
+
+                            Text("E-Mail: s.molina@gmx.de")
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+        }
+        .navigationTitle("Impressum")
+        .tint(AppTheme.accentBlue)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+}
+
+private struct LegalPrivacyView: View {
+    var body: some View {
+        ZStack {
+            AppBackground()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Datenschutzhinweise")
+                                .font(.headline)
+
+                            Text("Diese App verarbeitet Standortdaten zur Erkennung von Schichtstart/-ende über Geofencing.")
+                            Text("Schichtdaten werden lokal auf dem Gerät gespeichert.")
+                            Text("Für den optionalen Kalendereintrag wird nach Kalenderzugriff gefragt.")
+                            Text("Benachrichtigungen werden lokal auf dem Gerät erstellt.")
+
+                            Text("Hinweis: Bitte vor Veröffentlichung eine vollständige, rechtlich geprüfte Datenschutzerklärung ergänzen.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+        }
+        .navigationTitle("Datenschutz")
+        .tint(AppTheme.accentBlue)
+        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 }
 

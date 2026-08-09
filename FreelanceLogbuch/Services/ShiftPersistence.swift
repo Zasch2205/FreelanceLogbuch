@@ -2,6 +2,7 @@ import Foundation
 
 extension Notification.Name {
     static let shiftsDidChange = Notification.Name("shiftsDidChange")
+    static let shiftConfirmationRequired = Notification.Name("shiftConfirmationRequired")
 }
 
 enum ShiftPersistence {

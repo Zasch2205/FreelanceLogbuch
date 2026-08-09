@@ -5,6 +5,12 @@ import UserNotifications
 final class ShiftAutomationService: NSObject {
     static let shared = ShiftAutomationService()
 
+    enum InAppDecision {
+        case yes
+        case no
+        case later
+    }
+
     private enum Constants {
         static let categoryId = "SHIFT_EVENT_CATEGORY"
         static let actionYes = "SHIFT_ACTION_YES"
@@ -104,7 +110,7 @@ final class ShiftAutomationService: NSObject {
         locationManager.startMonitoring(for: region)
     }
 
-    private func scheduleQuestion(for eventType: EventType, locationName: String) {
+    private func scheduleQuestion(for eventType: EventType, locationName: String, delay: TimeInterval = 1) {
         let content = UNMutableNotificationContent()
         content.title = "FreelanceLogbuch"
         content.body = eventType == .start
@@ -117,7 +123,7 @@ final class ShiftAutomationService: NSObject {
             "locationName": locationName
         ]
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
@@ -143,6 +149,25 @@ final class ShiftAutomationService: NSObject {
         )
 
         notificationCenter.add(request)
+    }
+
+    func handleInAppConfirmation(eventTypeRaw: String, locationName: String, decision: InAppDecision) {
+        guard let eventType = EventType(rawValue: eventTypeRaw) else { return }
+
+        switch decision {
+        case .yes:
+            if eventType == .start {
+                handleConfirmedStart(locationName: locationName)
+            } else {
+                handleConfirmedEnd()
+            }
+
+        case .later:
+            scheduleQuestion(for: eventType, locationName: locationName, delay: 10 * 60)
+
+        case .no:
+            break
+        }
     }
 
     private func handleConfirmedStart(locationName: String) {
@@ -228,6 +253,16 @@ extension ShiftAutomationService: UNUserNotificationCenterDelegate {
 
         case Constants.actionLater:
             scheduleLater(from: response.notification.request.content)
+
+        case UNNotificationDefaultActionIdentifier:
+            NotificationCenter.default.post(
+                name: .shiftConfirmationRequired,
+                object: nil,
+                userInfo: [
+                    "eventType": eventType?.rawValue ?? "",
+                    "locationName": locationName
+                ]
+            )
 
         default:
             break
