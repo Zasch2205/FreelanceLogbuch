@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
-    @State private var shifts: [Shift] = Shift.sample
+    @State private var shifts: [Shift] = ShiftPersistence.load()
     @State private var isShowingSettings = false
     @State private var workLocations: [WorkLocation] = []
 
@@ -121,6 +121,14 @@ struct ContentView: View {
             }
             .onAppear {
                 workLocations = WorkLocationPersistence.load()
+                shifts = ShiftPersistence.load()
+                ShiftAutomationService.shared.refreshMonitoring()
+            }
+            .onChange(of: shifts) { _, updatedShifts in
+                ShiftPersistence.save(updatedShifts)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .shiftsDidChange)) { _ in
+                shifts = ShiftPersistence.load()
             }
         }
     }
@@ -637,7 +645,7 @@ private struct SettingsView: View {
             )
 
             workLocations.append(newLocation)
-            WorkLocationPersistence.save(workLocations)
+            saveWorkLocations()
 
             addressInput = ""
             isGeocoding = false
@@ -653,7 +661,7 @@ private struct SettingsView: View {
             updated.isActive = updated.id == id
             return updated
         }
-        WorkLocationPersistence.save(workLocations)
+        saveWorkLocations()
     }
 
     private func deleteLocations(at offsets: IndexSet) {
@@ -664,7 +672,12 @@ private struct SettingsView: View {
             return
         }
 
+        saveWorkLocations()
+    }
+
+    private func saveWorkLocations() {
         WorkLocationPersistence.save(workLocations)
+        ShiftAutomationService.shared.refreshMonitoring()
     }
 
     private func openInAppleMaps(location: WorkLocation) {
@@ -722,25 +735,6 @@ private enum AppTheme {
     )
 
     static let tableRowBackground = Color.white.opacity(0.2)
-}
-
-private enum WorkLocationPersistence {
-    private static let key = "workLocationsJSON"
-
-    static func load() -> [WorkLocation] {
-        guard
-            let data = UserDefaults.standard.data(forKey: key),
-            let locations = try? JSONDecoder().decode([WorkLocation].self, from: data)
-        else {
-            return []
-        }
-        return locations
-    }
-
-    static func save(_ locations: [WorkLocation]) {
-        guard let data = try? JSONEncoder().encode(locations) else { return }
-        UserDefaults.standard.set(data, forKey: key)
-    }
 }
 
 private enum ShiftCSVExporter {

@@ -1,6 +1,6 @@
 import Foundation
 
-struct Shift: Identifiable, Codable {
+struct Shift: Identifiable, Codable, Equatable {
     let id: UUID
     var locationName: String?
     var startAt: Date
