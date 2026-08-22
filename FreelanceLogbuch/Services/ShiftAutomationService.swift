@@ -6,18 +6,25 @@ final class ShiftAutomationService: NSObject {
     static let shared = ShiftAutomationService()
 
     enum InAppDecision {
-        case yes
+        case startGrafik
+        case startSchnitt
+        case endYes
         case no
         case later
     }
 
     private enum Constants {
-        static let categoryId = "SHIFT_EVENT_CATEGORY"
-        static let actionYes = "SHIFT_ACTION_YES"
+        static let categoryStartId = "SHIFT_EVENT_START_CATEGORY"
+        static let categoryEndId = "SHIFT_EVENT_END_CATEGORY"
+        static let actionStartGrafik = "SHIFT_ACTION_START_GRAFIK"
+        static let actionStartSchnitt = "SHIFT_ACTION_START_SCHNITT"
+        static let actionEndYes = "SHIFT_ACTION_END_YES"
         static let actionNo = "SHIFT_ACTION_NO"
         static let actionLater = "SHIFT_ACTION_LATER"
         static let regionPrefix = "worklocation-"
         static let defaultRadius: CLLocationDistance = 200
+        static let overtimeReminderPrefix = "SHIFT_OVERTIME_REMINDER-"
+        static let overtimeReminderHours = [11, 12, 13, 14]
     }
 
     private enum EventType: String {
@@ -41,6 +48,7 @@ final class ShiftAutomationService: NSObject {
         registerNotificationActions()
         requestNeededPermissions()
         refreshMonitoring()
+        refreshOpenShiftReminders()
     }
 
     func refreshMonitoring() {
@@ -64,8 +72,18 @@ final class ShiftAutomationService: NSObject {
     }
 
     private func registerNotificationActions() {
-        let yesAction = UNNotificationAction(
-            identifier: Constants.actionYes,
+        let startGrafikAction = UNNotificationAction(
+            identifier: Constants.actionStartGrafik,
+            title: "Grafik",
+            options: [.foreground]
+        )
+        let startSchnittAction = UNNotificationAction(
+            identifier: Constants.actionStartSchnitt,
+            title: "Schnitt",
+            options: [.foreground]
+        )
+        let endYesAction = UNNotificationAction(
+            identifier: Constants.actionEndYes,
             title: "Ja",
             options: [.foreground]
         )
@@ -80,13 +98,18 @@ final class ShiftAutomationService: NSObject {
             options: []
         )
 
-        let category = UNNotificationCategory(
-            identifier: Constants.categoryId,
-            actions: [yesAction, noAction, laterAction],
+        let startCategory = UNNotificationCategory(
+            identifier: Constants.categoryStartId,
+            actions: [startGrafikAction, startSchnittAction, noAction, laterAction],
+            intentIdentifiers: []
+        )
+        let endCategory = UNNotificationCategory(
+            identifier: Constants.categoryEndId,
+            actions: [endYesAction, noAction, laterAction],
             intentIdentifiers: []
         )
 
-        notificationCenter.setNotificationCategories([category])
+        notificationCenter.setNotificationCategories([startCategory, endCategory])
     }
 
     private func stopManagedRegions() {
@@ -117,7 +140,9 @@ final class ShiftAutomationService: NSObject {
             ? "\(locationName): Schicht startet jetzt?"
             : "\(locationName): Schicht ist jetzt zu Ende?"
         content.sound = .default
-        content.categoryIdentifier = Constants.categoryId
+        content.categoryIdentifier = eventType == .start
+            ? Constants.categoryStartId
+            : Constants.categoryEndId
         content.userInfo = [
             "eventType": eventType.rawValue,
             "locationName": locationName
@@ -133,12 +158,72 @@ final class ShiftAutomationService: NSObject {
         notificationCenter.add(request)
     }
 
+    private func openShift() -> Shift? {
+        ShiftPersistence.load().first(where: { $0.status == .open })
+    }
+
+    private func reminderIdentifiers(for shiftId: UUID) -> [String] {
+        Constants.overtimeReminderHours.map { hour in
+            "\(Constants.overtimeReminderPrefix)\(shiftId.uuidString)-\(hour)"
+        }
+    }
+
+    private func cancelOvertimeReminders(for shiftId: UUID) {
+        let identifiers = reminderIdentifiers(for: shiftId)
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
+        notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
+
+    private func refreshOpenShiftReminders() {
+        guard let shift = openShift() else { return }
+        scheduleOvertimeReminders(for: shift)
+    }
+
+    private func scheduleOvertimeReminders(for shift: Shift) {
+        cancelOvertimeReminders(for: shift.id)
+
+        guard shift.status == .open else { return }
+        let locationName = shift.locationName ?? "Arbeitsort"
+        let now = Date()
+
+        for hour in Constants.overtimeReminderHours {
+            let fireDate = shift.startAt.addingTimeInterval(TimeInterval(hour * 60 * 60))
+            guard fireDate > now else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = "FreelanceLogbuch"
+            content.body = "\(locationName): Schicht läuft seit \(hour) Stunden. Ist sie jetzt zu Ende?"
+            content.sound = .default
+            content.categoryIdentifier = Constants.categoryEndId
+            content.userInfo = [
+                "eventType": EventType.end.rawValue,
+                "locationName": locationName
+            ]
+
+            let triggerDelay = fireDate.timeIntervalSinceNow
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: triggerDelay, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: "\(Constants.overtimeReminderPrefix)\(shift.id.uuidString)-\(hour)",
+                content: content,
+                trigger: trigger
+            )
+            notificationCenter.add(request)
+        }
+    }
+
     private func scheduleLater(from content: UNNotificationContent) {
         let newContent = UNMutableNotificationContent()
         newContent.title = content.title
         newContent.body = content.body
         newContent.sound = .default
-        newContent.categoryIdentifier = Constants.categoryId
+        if let eventTypeRaw = content.userInfo["eventType"] as? String,
+           let eventType = EventType(rawValue: eventTypeRaw) {
+            newContent.categoryIdentifier = eventType == .start
+                ? Constants.categoryStartId
+                : Constants.categoryEndId
+        } else {
+            newContent.categoryIdentifier = Constants.categoryEndId
+        }
         newContent.userInfo = content.userInfo
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 10 * 60, repeats: false)
@@ -155,10 +240,16 @@ final class ShiftAutomationService: NSObject {
         guard let eventType = EventType(rawValue: eventTypeRaw) else { return }
 
         switch decision {
-        case .yes:
-            if eventType == .start {
-                handleConfirmedStart(locationName: locationName)
-            } else {
+        case .startGrafik:
+            guard eventType == .start else { return }
+            handleConfirmedStart(locationName: locationName, assignmentType: .grafik)
+
+        case .startSchnitt:
+            guard eventType == .start else { return }
+            handleConfirmedStart(locationName: locationName, assignmentType: .schnitt)
+
+        case .endYes:
+            if eventType == .end {
                 handleConfirmedEnd()
             }
 
@@ -170,7 +261,7 @@ final class ShiftAutomationService: NSObject {
         }
     }
 
-    private func handleConfirmedStart(locationName: String) {
+    private func handleConfirmedStart(locationName: String, assignmentType: AssignmentType) {
         var shifts = ShiftPersistence.load()
         guard shifts.contains(where: { $0.status == .open }) == false else { return }
 
@@ -181,11 +272,12 @@ final class ShiftAutomationService: NSObject {
             endAt: nil,
             status: .open,
             createdBy: .geofence,
-            assignmentType: .sonstiges,
+            assignmentType: assignmentType,
             note: nil
         )
         shifts.append(newShift)
         ShiftPersistence.save(shifts)
+        scheduleOvertimeReminders(for: newShift)
         NotificationCenter.default.post(name: .shiftsDidChange, object: nil)
     }
 
@@ -196,6 +288,7 @@ final class ShiftAutomationService: NSObject {
         shifts[index].endAt = Date()
         shifts[index].status = .closed
         let closedShift = shifts[index]
+        cancelOvertimeReminders(for: closedShift.id)
 
         ShiftPersistence.save(shifts)
         NotificationCenter.default.post(name: .shiftsDidChange, object: nil)
@@ -215,6 +308,8 @@ extension ShiftAutomationService: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        guard openShift() == nil else { return }
+
         guard
             let locationId = UUID(uuidString: region.identifier.replacingOccurrences(of: Constants.regionPrefix, with: "")),
             let location = WorkLocationPersistence.load().first(where: { $0.id == locationId })
@@ -224,12 +319,14 @@ extension ShiftAutomationService: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        guard let shift = openShift() else { return }
+
         guard
             let locationId = UUID(uuidString: region.identifier.replacingOccurrences(of: Constants.regionPrefix, with: "")),
             let location = WorkLocationPersistence.load().first(where: { $0.id == locationId })
         else { return }
 
-        scheduleQuestion(for: .end, locationName: location.name)
+        scheduleQuestion(for: .end, locationName: shift.locationName ?? location.name)
     }
 }
 
@@ -244,10 +341,18 @@ extension ShiftAutomationService: UNUserNotificationCenterDelegate {
         let locationName = userInfo["locationName"] as? String ?? "Arbeitsort"
 
         switch response.actionIdentifier {
-        case Constants.actionYes:
+        case Constants.actionStartGrafik:
             if eventType == .start {
-                handleConfirmedStart(locationName: locationName)
-            } else if eventType == .end {
+                handleConfirmedStart(locationName: locationName, assignmentType: .grafik)
+            }
+
+        case Constants.actionStartSchnitt:
+            if eventType == .start {
+                handleConfirmedStart(locationName: locationName, assignmentType: .schnitt)
+            }
+
+        case Constants.actionEndYes:
+            if eventType == .end {
                 handleConfirmedEnd()
             }
 

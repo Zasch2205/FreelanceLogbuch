@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var pendingEventTypeRaw: String = ""
     @State private var pendingLocationName: String = ""
     @State private var statusBannerText: String?
+    @State private var currentTime: Date = Date()
 
     init() {
         Self.configureNavigationBarAppearance()
@@ -29,6 +30,12 @@ struct ContentView: View {
 
     private var latestShifts: [Shift] {
         Array(sortedShifts.prefix(2))
+    }
+
+    private var criticalOpenShift: Shift? {
+        shifts.first {
+            $0.status == .open && currentTime.timeIntervalSince($0.startAt) >= 14 * 60 * 60
+        }
     }
 
     var body: some View {
@@ -80,7 +87,7 @@ struct ContentView: View {
                                 GlassPanel {
                                     VStack(spacing: 0) {
                                         ForEach(Array(latestShifts.enumerated()), id: \.element.id) { index, shift in
-                                            ShiftRowView(shift: shift)
+                                            ShiftRowView(shift: shift, now: currentTime)
 
                                             if index < latestShifts.count - 1 {
                                                 Divider()
@@ -146,16 +153,36 @@ struct ContentView: View {
                 pendingLocationName = locationName
                 showNotificationConfirmation = true
             }
+            .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { now in
+                currentTime = now
+            }
             .alert(notificationAlertTitle, isPresented: $showNotificationConfirmation) {
-                Button("Ja") {
-                    ShiftAutomationService.shared.handleInAppConfirmation(
-                        eventTypeRaw: pendingEventTypeRaw,
-                        locationName: pendingLocationName,
-                        decision: .yes
-                    )
-                    showStatusBanner(
-                        pendingEventTypeRaw == "start" ? "Schicht gestartet" : "Schicht beendet"
-                    )
+                if pendingEventTypeRaw == "start" {
+                    Button("Grafik") {
+                        ShiftAutomationService.shared.handleInAppConfirmation(
+                            eventTypeRaw: pendingEventTypeRaw,
+                            locationName: pendingLocationName,
+                            decision: .startGrafik
+                        )
+                        showStatusBanner("Schicht gestartet · Grafik")
+                    }
+                    Button("Schnitt") {
+                        ShiftAutomationService.shared.handleInAppConfirmation(
+                            eventTypeRaw: pendingEventTypeRaw,
+                            locationName: pendingLocationName,
+                            decision: .startSchnitt
+                        )
+                        showStatusBanner("Schicht gestartet · Schnitt")
+                    }
+                } else {
+                    Button("Ja") {
+                        ShiftAutomationService.shared.handleInAppConfirmation(
+                            eventTypeRaw: pendingEventTypeRaw,
+                            locationName: pendingLocationName,
+                            decision: .endYes
+                        )
+                        showStatusBanner("Schicht beendet")
+                    }
                 }
                 Button("Später") {
                     ShiftAutomationService.shared.handleInAppConfirmation(
@@ -175,21 +202,37 @@ struct ContentView: View {
                 Text(notificationAlertMessage)
             }
             .overlay(alignment: .top) {
-                if let statusBannerText {
-                    Text(statusBannerText)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay(
-                            Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1)
-                        )
-                        .padding(.top, 8)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                VStack(spacing: 8) {
+                    if let criticalOpenShift {
+                        Text("⚠️ Kritisch: Schicht läuft seit über 14 Stunden (\(criticalOpenShift.assignmentType.rawValue)).")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color.red.opacity(0.92), in: Capsule())
+                            .overlay(
+                                Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
+                    if let statusBannerText {
+                        Text(statusBannerText)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(
+                                Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1)
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .padding(.top, 8)
             }
             .animation(.easeInOut(duration: 0.25), value: statusBannerText)
+            .animation(.easeInOut(duration: 0.25), value: criticalOpenShift?.id)
         }
     }
 
@@ -230,11 +273,27 @@ struct ContentView: View {
 
 private struct ShiftRowView: View {
     let shift: Shift
+    var now: Date = Date()
+
+    private var isCriticalOpen: Bool {
+        shift.status == .open && now.timeIntervalSince(shift.startAt) >= 14 * 60 * 60
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(shift.title)
-                .font(.headline)
+            HStack(spacing: 8) {
+                Text(shift.title)
+                    .font(.headline)
+
+                if isCriticalOpen {
+                    Text("KRITISCH")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.red.opacity(0.95), in: Capsule())
+                }
+            }
             Text(shift.subtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -244,6 +303,8 @@ private struct ShiftRowView: View {
 }
 
 private struct AllShiftsView: View {
+    @Environment(\.editMode) private var editMode
+
     @Binding var shifts: [Shift]
     let activeLocationName: String?
 
@@ -252,6 +313,8 @@ private struct AllShiftsView: View {
     @State private var shareItems: [Any] = []
     @State private var isShowingAddShift = false
     @State private var noActiveLocationAlert = false
+    @State private var shiftToEdit: Shift?
+    @State private var currentTime: Date = Date()
 
     private var sortedShifts: [Shift] {
         shifts.sorted { $0.startAt > $1.startAt }
@@ -270,8 +333,13 @@ private struct AllShiftsView: View {
                     .listRowBackground(Color.clear)
                 } else {
                     ForEach(sortedShifts) { shift in
-                        ShiftRowView(shift: shift)
+                        ShiftRowView(shift: shift, now: currentTime)
                             .listRowBackground(AppTheme.tableRowBackground)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                guard editMode?.wrappedValue.isEditing == true else { return }
+                                shiftToEdit = shift
+                            }
                     }
                     .onDelete(perform: deleteShifts)
                 }
@@ -294,6 +362,9 @@ private struct AllShiftsView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .listRowSeparator(.visible)
+            .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { now in
+                currentTime = now
+            }
         }
         .navigationTitle("Alle Schichten")
         .tint(AppTheme.accentBlue)
@@ -334,6 +405,11 @@ private struct AllShiftsView: View {
                 addManualShift(startAt: date.startAt, endAt: date.endAt, assignmentType: date.assignmentType)
             }
         }
+        .sheet(item: $shiftToEdit) { shift in
+            ShiftEditView(shift: shift) { updatedShift in
+                updateShift(updatedShift)
+            }
+        }
     }
 
     private func exportAndShare() {
@@ -363,6 +439,82 @@ private struct AllShiftsView: View {
         )
         shifts.append(newShift)
     }
+
+    private func updateShift(_ updatedShift: Shift) {
+        guard let index = shifts.firstIndex(where: { $0.id == updatedShift.id }) else { return }
+        shifts[index] = updatedShift
+    }
+}
+
+private struct ShiftEditView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let shift: Shift
+    let onSave: (Shift) -> Void
+
+    @State private var startAt: Date
+    @State private var endAt: Date
+    @State private var assignmentType: AssignmentType
+
+    init(shift: Shift, onSave: @escaping (Shift) -> Void) {
+        self.shift = shift
+        self.onSave = onSave
+        _startAt = State(initialValue: shift.startAt)
+        _endAt = State(initialValue: shift.endAt ?? shift.startAt.addingTimeInterval(8 * 60 * 60))
+        _assignmentType = State(initialValue: shift.assignmentType)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AppBackground()
+
+                Form {
+                    Section {
+                        DatePicker("Start", selection: $startAt)
+                        DatePicker("Ende", selection: $endAt)
+                    } header: {
+                        AppSectionHeader("Datum und Uhrzeit")
+                    }
+                    .listRowBackground(Color.clear)
+
+                    Section {
+                        Picker("Einsatzart", selection: $assignmentType) {
+                            Text("Grafik").tag(AssignmentType.grafik)
+                            Text("Schnitt").tag(AssignmentType.schnitt)
+                            Text("Sonstiges").tag(AssignmentType.sonstiges)
+                        }
+                        .pickerStyle(.segmented)
+                    } header: {
+                        AppSectionHeader("Einsatzart")
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .navigationTitle("Einsatz bearbeiten")
+            .tint(AppTheme.accentBlue)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Abbrechen") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Speichern") {
+                        var updatedShift = shift
+                        updatedShift.startAt = startAt
+                        updatedShift.endAt = endAt
+                        updatedShift.status = .closed
+                        updatedShift.assignmentType = assignmentType
+                        onSave(updatedShift)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
 }
 
 private struct AddManualShiftView: View {
@@ -389,8 +541,8 @@ private struct AddManualShiftView: View {
                     .listRowBackground(Color.clear)
 
                     Section {
-                        DatePicker("Startzeit", selection: $startAt)
-                        DatePicker("Endezeit", selection: $endAt)
+                        DatePicker("Start", selection: $startAt)
+                        DatePicker("Ende", selection: $endAt)
                     } header: {
                         AppSectionHeader("Datum und Uhrzeit")
                     }
@@ -472,6 +624,7 @@ private struct GlassPanel<Content: View>: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(Color.white.opacity(0.26), lineWidth: 1)
+                    .allowsHitTesting(false)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -482,6 +635,7 @@ private struct GlassPanel<Content: View>: View {
                             endPoint: .center
                         )
                     )
+                    .allowsHitTesting(false)
             )
             .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 6)
     }
@@ -509,6 +663,7 @@ private struct AppBackground: View {
                 .blendMode(.plusLighter)
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
