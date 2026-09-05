@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var pendingLocationName: String = ""
     @State private var statusBannerText: String?
     @State private var currentTime: Date = Date()
+    @State private var calendarSyncTask: Task<Void, Never>?
+    @State private var warningShiftToClose: Shift?
+
+    private let calendarService: ShiftCalendarSyncing = ShiftCalendarService()
 
     init() {
         Self.configureNavigationBarAppearance()
@@ -128,15 +132,22 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $isShowingSettings) {
-                SettingsView(workLocations: $workLocations)
+                SettingsView(workLocations: $workLocations, shifts: $shifts)
+            }
+            .sheet(item: $warningShiftToClose) { shift in
+                WarningEndTimeEntryView(shift: shift) { endDate in
+                    closeShiftFromWarning(shiftId: shift.id, endDate: endDate)
+                }
             }
             .onAppear {
                 workLocations = WorkLocationPersistence.load()
                 shifts = ShiftPersistence.load()
                 ShiftAutomationService.shared.refreshMonitoring()
+                syncCalendarForChangedShifts(previous: [], current: shifts)
             }
-            .onChange(of: shifts) { _, updatedShifts in
+            .onChange(of: shifts) { oldShifts, updatedShifts in
                 ShiftPersistence.save(updatedShifts)
+                syncCalendarForChangedShifts(previous: oldShifts, current: updatedShifts)
             }
             .onReceive(NotificationCenter.default.publisher(for: .shiftsDidChange)) { _ in
                 shifts = ShiftPersistence.load()
@@ -204,16 +215,21 @@ struct ContentView: View {
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
                     if let criticalOpenShift {
-                        Text("⚠️ Kritisch: Schicht läuft seit über 14 Stunden (\(criticalOpenShift.assignmentType.rawValue)).")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(Color.red.opacity(0.92), in: Capsule())
-                            .overlay(
-                                Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1)
-                            )
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                        Button {
+                            warningShiftToClose = criticalOpenShift
+                        } label: {
+                            Text("⚠️ Kritisch: Schicht läuft seit über 14 Stunden (\(criticalOpenShift.assignmentType.rawValue)).")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(Color.red.opacity(0.92), in: Capsule())
+                                .overlay(
+                                    Capsule().stroke(Color.white.opacity(0.28), lineWidth: 1)
+                                )
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if let statusBannerText {
@@ -252,6 +268,47 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
             statusBannerText = nil
         }
+    }
+
+    private func syncCalendarForChangedShifts(previous: [Shift], current: [Shift]) {
+        let previousById = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+
+        let shiftsToSync = current.filter { shift in
+            guard shift.endAt != nil else { return false }
+
+            guard let oldShift = previousById[shift.id] else {
+                return true
+            }
+
+            return oldShift.endAt != shift.endAt
+                || oldShift.startAt != shift.startAt
+                || oldShift.assignmentType != shift.assignmentType
+                || oldShift.locationName != shift.locationName
+                || oldShift.note != shift.note
+                || oldShift.status != shift.status
+        }
+
+        guard shiftsToSync.isEmpty == false else { return }
+
+        calendarSyncTask?.cancel()
+        let pendingShifts = shiftsToSync
+
+        calendarSyncTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard Task.isCancelled == false else { return }
+
+            for shift in pendingShifts {
+                guard Task.isCancelled == false else { return }
+                try? await calendarService.upsertShiftInCalendar(shift)
+            }
+        }
+    }
+
+    private func closeShiftFromWarning(shiftId: UUID, endDate: Date) {
+        guard let index = shifts.firstIndex(where: { $0.id == shiftId }) else { return }
+        let startDate = shifts[index].startAt
+        shifts[index].endAt = max(endDate, startDate)
+        shifts[index].status = .closed
     }
 
     private static func configureNavigationBarAppearance() {
@@ -299,6 +356,63 @@ private struct ShiftRowView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct WarningEndTimeEntryView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let shift: Shift
+    let onSave: (Date) -> Void
+
+    @State private var endDate: Date
+
+    init(shift: Shift, onSave: @escaping (Date) -> Void) {
+        self.shift = shift
+        self.onSave = onSave
+        _endDate = State(initialValue: max(Date(), shift.startAt))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AppBackground()
+
+                Form {
+                    Section {
+                        Text(shift.title)
+                            .font(.subheadline)
+                    } header: {
+                        AppSectionHeader("Warnung")
+                    }
+                    .listRowBackground(Color.clear)
+
+                    Section {
+                        DatePicker("Schichtende", selection: $endDate, in: shift.startAt...)
+                    } header: {
+                        AppSectionHeader("Endzeit setzen")
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .navigationTitle("Schicht beenden")
+            .tint(AppTheme.accentBlue)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Abbrechen") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Speichern") {
+                        onSave(endDate)
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -711,12 +825,18 @@ private struct SettingsView: View {
     @Environment(\.openURL) private var openURL
 
     @Binding var workLocations: [WorkLocation]
+    @Binding var shifts: [Shift]
 
     @AppStorage("freelancerName") private var freelancerName: String = ""
 
     @State private var addressInput: String = ""
     @State private var errorMessage: String?
     @State private var isGeocoding = false
+    @State private var isCleaningCalendarDuplicates = false
+    @State private var calendarCleanupMessage: String?
+    @State private var showCalendarCleanupAlert = false
+
+    private let calendarService: ShiftCalendarSyncing = ShiftCalendarService()
 
     private var activeLocation: WorkLocation? {
         workLocations.first(where: { $0.isActive })
@@ -835,6 +955,34 @@ private struct SettingsView: View {
                     }
 
                     Section {
+                        GlassPanel {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Button {
+                                    Task {
+                                        await cleanupCalendarDuplicates()
+                                    }
+                                } label: {
+                                    HStack {
+                                        if isCleaningCalendarDuplicates {
+                                            ProgressView()
+                                        }
+                                        Text("Kalender-Dubletten bereinigen")
+                                            .fontWeight(.semibold)
+                                    }
+                                }
+                                .disabled(isCleaningCalendarDuplicates || shifts.filter({ $0.endAt != nil }).isEmpty)
+
+                                Text("Bereinigt doppelte Schicht-Termine im Kalender, z. B. nach Uhrzeit-Änderungen.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        AppSectionHeader("Kalender")
+                    }
+                    .listRowBackground(Color.clear)
+
+                    Section {
                         NavigationLink {
                             AppInfoView()
                         } label: {
@@ -851,6 +999,11 @@ private struct SettingsView: View {
             .navigationTitle("Settings")
             .tint(AppTheme.accentBlue)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .alert("Kalenderbereinigung", isPresented: $showCalendarCleanupAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(calendarCleanupMessage ?? "Fertig.")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Schließen") {
@@ -931,6 +1084,22 @@ private struct SettingsView: View {
         }
 
         saveWorkLocations()
+    }
+
+    private func cleanupCalendarDuplicates() async {
+        isCleaningCalendarDuplicates = true
+        defer { isCleaningCalendarDuplicates = false }
+
+        do {
+            let removedCount = try await calendarService.cleanupDuplicateShiftEvents(for: shifts)
+            calendarCleanupMessage = removedCount == 0
+                ? "Keine Dubletten gefunden."
+                : "\(removedCount) Dublette(n) entfernt."
+        } catch {
+            calendarCleanupMessage = "Bereinigung fehlgeschlagen. Bitte Kalenderzugriff prüfen."
+        }
+
+        showCalendarCleanupAlert = true
     }
 
     private func saveWorkLocations() {
